@@ -12,31 +12,33 @@ Videos: [highlights](media/hero.mp4) · [the two bugs Claude fixed](media/stove_
 
 ## Loop
 1. **Write:** Claude Sonnet (Claude Code CLI, no tools) gets the robot API, the task, its BDDL scene file and
-   optionally skill notes. It writes one Python program. Nothing is trained.
+   optionally skill notes. It writes one Python program. No policy is trained.
 2. **Run:** the program runs alone. SAM3 + depth locate objects, PyRoki does IK.
 3. **Fix:** on failure Claude gets the errors and the last camera frame of the first failed seed, and rewrites
    the program (up to 5 times, on 3 practice seeds).
 4. **Test:** the frozen program runs on 5 other seeds. The simulator decides success.
 
-A seed moves objects within a box of about 2 cm. The arrangement stays the same, so these are unseen seeds,
-not new layouts.
+A seed re-samples positions from small placement regions, so objects shift by a few cm. The arrangement stays the same,
+so these are different seeds, not new layouts. Runs 2 and 3 reused test seeds 1–5 from earlier runs, and Run 3's
+prompt rules were written after looking at Run 2's failures on them. Run 4's test seeds 6–10 were new.
 
 ## Best programs
 These are the best across runs and memory conditions, **not averages**.
 
-| Task | First program | After rewrites | Run, condition | Human motion hints |
+| Task | First program | After rewrites | Run, condition | Hints from earlier failures |
 |---|---|---|---|---|
 | Turn on the stove | 0/5 | **5/5** (1 rewrite) | 4, C | yes |
-| Bowl on the plate | 0/5 | **5/5** (4 rewrites) | 3, D | general prompt rules only |
+| Bowl on the plate | 0/5 | **5/5** (4 rewrites) | 3, D | general prompt rules, reused test seeds |
 | Bowl on the stove | 0/5 | **3/5** (1 rewrite) | 4, C | yes |
 | Push the plate | 0/5 | **0/5** | none worked | yes (run 4) |
 
 ### What the stove rewrite fixed
 The first program had two bugs, both visible in the traces:
-- **Wrong spot:** in 4 of 5 test runs it closed the gripper on the stove, about 15 cm from the knob.
+- **Wrong spot:** in 4 of 5 test runs it closed the gripper on the stove, roughly 15–21 cm from the knob.
 - **Wrong direction:** in the run where it did reach the knob, it twisted against the stop.
 
-The rewrite added a size filter and other queries to the knob detection and reversed the twist
+The rewrite added a size filter and other queries to the knob detection, gripped about 1.5 cm lower and reversed the twist.
+The three changes were not tested separately
 (its comment: `previous positive twist did not turn the stove on`). See
 [v1](results/programs/run4/turn_on_stove_C/v1.py) and [v2](results/programs/run4/turn_on_stove_C/v2.py).
 
@@ -61,20 +63,24 @@ All out of 5. Raw data: [summary.csv](results/summary.csv), [episodes.csv](resul
 What changed between runs:
 - **Run 2:** 1000-step episodes, 3 rewrites. A bug sent Claude empty error messages.
 - **Run 3:** 2500-step episodes, real error messages, 5 rewrites, more prompt rules about blocked moves.
-- **Run 4:** human hints (below), bug fixes, fresh test seeds 6–10, weak tasks only, conditions A and C.
+- **Run 4:** hints (below), bug fixes, fresh test seeds 6–10, weak tasks only, conditions A and C.
   The final program is the best on the practice seeds (newest on ties), instead of the last one.
 
 Because several things changed at once, improvements can't be credited to any single change.
 
 ## Does skill memory help?
 **Inconclusive.**
-- The notes are used: a helper from ASPIRE's notes appears in 33/37 programs given the relevant notes and in
+- The notes are used: a helper from ASPIRE's notes appears in 33/37 programs given only the relevant notes (B) and in
   0/56 given none (rewrites included).
 - A better success rate is not shown. There is one generation chain per task and condition, and the winner
   flips between runs.
 - Next: repeated generations per condition, with everything fixed in advance.
 
-## Human help in Run 4
+## Outside help in Run 4
+The Claude that writes the robot programs did not find these by itself. A separate Claude Code session, used by
+the author to build and debug this project, wrote them after reading failed runs, including the test seeds of
+earlier runs. It also wrote Run 3's prompt rules. An earlier version of this README wrongly called the hints human.
+
 - Travel at about z = 0.30 m before moving sideways: there is no collision-aware planner in this setup.
 - Treat a joint error under 0.05 rad as "arrived". The prompt gave a one-line check for this, and the winning programs use it.
 - Sanity-check detections (a knob is low and next to the stove).
