@@ -1,0 +1,45 @@
+import math
+
+result = {"localized": False, "sweeps": []}
+
+def near_ok(r):
+    return r.ok or (r.error is not None and r.error.details.get("joint_error_rad", 9) < 0.05)
+
+quat = [0.0, 1.0, 0.0, 0.0]
+
+target = None
+knob = localize_object("stove knob")
+if knob.ok:
+    kp = knob.geometry.pose.position
+    kz = float(kp[2])
+    result["knob_pos"] = [float(kp[0]), float(kp[1]), kz]
+    if kz < 0.15:
+        target = [float(kp[0]), float(kp[1]), kz]
+        result["target_src"] = "knob"
+
+if target is None:
+    loc = localize_object("flat stove")
+    if loc.ok:
+        p = loc.geometry.pose.position
+        ext = loc.geometry.extents
+        target = [float(p[0]) + 0.5 * float(ext[0]) - 0.03, float(p[1]), float(p[2])]
+        result["target_src"] = "stove"
+
+if target is not None:
+    result["localized"] = True
+    x, y, z = target
+    close_gripper()
+    for dx, zl in [(0.0, 0.07), (0.03, 0.06), (-0.03, 0.06), (0.0, 0.05)]:
+        info = {"dx": dx, "z": zl}
+        r = move_to_pose(Pose([x + dx, y - 0.07, 0.32], quat, "robot_base"))
+        if not near_ok(r):
+            info["fail"] = "above"
+            result["sweeps"].append(info)
+            break
+        r2 = move_to_pose(Pose([x + dx, y - 0.07, zl], quat, "robot_base"))
+        info["down"] = near_ok(r2)
+        if info["down"]:
+            r3 = move_to_pose(Pose([x + dx, y + 0.07, zl], quat, "robot_base"))
+            info["swept"] = near_ok(r3)
+        move_to_pose(Pose([x + dx, y + 0.07 if info["down"] else y - 0.07, 0.32], quat, "robot_base"))
+        result["sweeps"].append(info)

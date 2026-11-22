@@ -1,0 +1,68 @@
+def quantile(values, fraction):
+    ordered = sorted(float(v) for v in values)
+    return ordered[int((len(ordered) - 1) * fraction)]
+
+
+def locate(queries, camera_name="agentview"):
+    base = get_robot_state().base_frame
+    for q in queries:
+        f = localize_object(q, camera_name=camera_name, target_frame=base)
+        if f.ok and len(f.point_cloud.points) >= 20:
+            return f
+    return None
+
+
+def go(pose, tol=0.03, steps=450):
+    r = move_to_pose(pose, tolerance=tol, max_steps=steps)
+    return r
+
+
+base_frame = get_robot_state().base_frame
+downward = get_robot_state().end_effector_poses["primary"].quaternion_wxyz
+result = {"localized": False, "grasped": False, "placed": False}
+
+bowl = locate(("black bowl", "bowl"))
+stove = locate(("flat stove", "stove", "black stove"))
+if bowl is None or stove is None:
+    result["error"] = "localization failed"
+else:
+    result["localized"] = True
+    bpts = bowl.point_cloud.points
+    bc = bowl.geometry.pose.position
+    top_z = quantile((p[2] for p in bpts), 0.95)
+    bottom_z = quantile((p[2] for p in bpts), 0.02)
+    bowl_h = top_z - bottom_z
+    base_med_z = quantile((p[2] for p in bpts), 0.5)
+    sc = stove.geometry.pose.position
+    stove_z = quantile((p[2] for p in stove.point_cloud.points), 0.9)
+
+    rim_x = quantile((p[0] for p in bpts), 0.05)
+    gx = rim_x + 0.012
+    grasp_z = top_z - 0.02
+    open_gripper()
+    r1 = go(Pose((gx, bc[1], top_z + 0.10), downward, base_frame))
+    r2 = go(Pose((gx, bc[1], grasp_z), downward, base_frame), 0.02, 450)
+    result["approach_ok"] = bool(r1.ok and r2.ok)
+    close_gripper()
+    lift_z = top_z + 0.15
+    r3 = go(Pose((gx, bc[1], lift_z), downward, base_frame))
+    after = locate(("black bowl", "bowl"))
+    if after is not None:
+        az = quantile((p[2] for p in after.point_cloud.points), 0.5)
+        result["grasped"] = (az - base_med_z) > 0.02
+
+    off_x = gx - bc[0]
+    tx = sc[0] + off_x
+    ty = sc[1]
+    r4 = go(Pose((tx, ty, lift_z + 0.05), downward, base_frame), 0.03, 500)
+    release_z = stove_z + bowl_h + 0.05
+    r5 = go(Pose((tx, ty, release_z), downward, base_frame), 0.03, 450)
+    open_gripper()
+    state = get_robot_state()
+    for i in range(15):
+        step(RobotAction(arms={"primary": ArmCommand(
+            "joint_position", state.joint_positions["primary"],
+            gripper_position=1.0,
+            embodiment=state.embodiment)}))
+    go(Pose((tx, ty, lift_z + 0.05), downward, base_frame), 0.04, 300)
+    result["placed"] = bool(r4.ok and r5.ok)
